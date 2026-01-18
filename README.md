@@ -78,7 +78,6 @@ Add this configuration to your OpenCode config file:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
   "providers": {
     "00bx-gemini": {
       "npm": "@ai-sdk/openai-compatible",
@@ -90,8 +89,7 @@ Add this configuration to your OpenCode config file:
         "00bx-gemini-web": {}
       }
     }
-  },
-  "model": "00bx-gemini/00bx-gemini-web"
+  }
 }
 ```
 
