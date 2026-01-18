@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Setting up GMNA Web Proxy for OpenCode..."
+echo "Setting up Gemini Web Proxy for OpenCode..."
 echo "=========================================="
 
 # Check Python version

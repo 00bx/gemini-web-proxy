@@ -1,4 +1,4 @@
-# GMNA Web Proxy for OpenCode
+# Gemini Web Proxy for OpenCode
 
 A free Gemini web interface proxy that works as an OpenAI-compatible API for OpenCode. This project allows you to use your free Gemini web subscription as a local API provider with full tool calling support.
 
@@ -33,7 +33,7 @@ A free Gemini web interface proxy that works as an OpenAI-compatible API for Ope
 
 ```bash
 git clone <repository-url>
-cd gmna-web-proxy
+cd gemini-web-proxy
 chmod +x setup.sh
 ./setup.sh
 ```
@@ -44,7 +44,7 @@ chmod +x setup.sh
 
 ```bash
 git clone <repository-url>
-cd gmna-web-proxy
+cd gemini-web-proxy
 ```
 
 ### Step 2: Install Dependencies
@@ -161,7 +161,7 @@ Make sure your OpenCode configuration matches exactly:
 ## Project Structure
 
 ```
-gmna-web-proxy/
+gemini-web-proxy/
 ├── server.py          # Main proxy server
 ├── run.py            # Startup script
 ├── requirements.txt  # Python dependencies
@@ -174,8 +174,8 @@ gmna-web-proxy/
 ### Architecture
 
 ```
-OpenCode → HTTP Request → GMNA Proxy → Browser Automation → Gemini Web
-                                    ← Response Processing ←
+OpenCode → HTTP Request → Gemini Proxy → Browser Automation → Gemini Web
+                                      ← Response Processing ←
 ```
 
 ### Session Management
