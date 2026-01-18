@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import json
 import asyncio
 import time
@@ -28,7 +28,7 @@ session_msg_count: Dict[str, int] = {}  # Track message count per session
 
 class Message(BaseModel):
     role: str
-    content: Optional[str] = None
+    content: Optional[Union[str, List[Dict[str, Any]]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
     tool_calls: Optional[List[Dict]] = None
@@ -56,6 +56,19 @@ class ChatRequest(BaseModel):
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None
 
+def get_content_text(content: Any) -> str:
+    """Helper to extract text from string or list content"""
+    if not content:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join([
+            c.get("text", "") 
+            for c in content 
+            if isinstance(c, dict) and c.get("type") == "text"
+        ])
+    return ""
 
 async def check_logged_in(page: Page) -> bool:
     try:
@@ -346,7 +359,7 @@ def format_conversation(messages: List[Message], tools: Optional[List[Tool]] = N
     
     for msg in messages:
         role = msg.role
-        content = msg.content or ""
+        content = get_content_text(msg.content)
         
         if role == "system":
             formatted.append(f"System Instructions:\n{content}")
@@ -634,8 +647,9 @@ async def chat_completions(request: ChatRequest):
     # Use system prompt hash for session ID
     session_id = "default"
     for msg in request.messages:
-        if msg.role == "system" and msg.content:
-            session_id = str(hash(msg.content[:100]))[:8]
+        content_text = get_content_text(msg.content)
+        if msg.role == "system" and content_text:
+            session_id = str(hash(content_text[:100]))[:8]
             break
     
     # Detect new conversation: compare current message count with what we've seen
