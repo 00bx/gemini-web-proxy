@@ -93,12 +93,6 @@ Add this configuration to your OpenCode config file:
 }
 ```
 
-Or use the command line flag:
-
-```bash
-opencode -m 00bx-gemini/00bx-gemini-web
-```
-
 ## Usage
 
 ### Starting the Proxy
