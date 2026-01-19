@@ -27,6 +27,63 @@ A free Gemini web interface proxy that works as an OpenAI-compatible API for Ope
 - Chrome browser installed
 - OpenCode installed
 
+## Configuration (Optional)
+
+The proxy can be configured without editing code.
+
+### Prompt templates
+
+Tool-calling behavior is driven by Markdown templates stored in the `prompts/` directory.
+
+- The server loads `prompts/tools_prompt.<lang>.md` if available
+- Fallback: `prompts/tools_prompt.en.md`
+
+When you clone the repository, `prompts/` is included. If you package or copy files manually, ensure `prompts/` is present, otherwise the server will raise a `RuntimeError` when tool calling is enabled.
+
+### User config and environment variables
+
+On first run, the proxy creates a config file at:
+
+- `~/.gemini-service/config.json` 
+
+Settings priority is:
+
+1. Environment variables
+2. `config.json`
+3. Defaults
+
+Supported settings:
+
+- `lang`: language code for prompt templates (example: `en`, `fr`)
+- `desktop_path`: absolute path used in prompts/examples (useful on Windows or custom home layouts)
+
+### Examples :
+
+Linux :
+```
+{
+  "lang": "en",
+  "desktop_path": "/home/USERNAME/Desktop"
+}
+```
+
+
+Windows :
+```
+{
+  "lang": "en",
+  "desktop_path": "C:/Users/USERNAME/Desktop"
+}
+```
+
+MacOS :
+```
+{
+  "lang": "en",
+  "desktop_path": "/Users/USERNAME/Desktop"
+}
+```
+
 ## Installation
 
 ### Quick Setup (Recommended)
@@ -158,6 +215,7 @@ Make sure your OpenCode configuration matches exactly:
 gemini-web-proxy/
 ├── server.py          # Main proxy server
 ├── run.py            # Startup script
+├── prompts/          # Prompt templates used for tool calling
 ├── requirements.txt  # Python dependencies
 ├── README.md        # This file
 └── .gitignore       # Git ignore rules

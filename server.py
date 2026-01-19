@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from playwright.async_api import async_playwright, BrowserContext, Page
 from markdownify import markdownify as md
+import sys
+import os
 
 app = FastAPI()
 
@@ -16,6 +18,9 @@ app = FastAPI()
 SERVICE_DIR = Path.home() / ".gemini-service"
 PROFILE_DIR = SERVICE_DIR / "chrome-profile"
 LOGIN_FLAG = SERVICE_DIR / "logged-in"
+MOD = "Meta" if sys.platform == "darwin" else "Control"
+PROMPTS_DIR = Path(__file__).parent / "prompts"
+CONFIG_FILE = SERVICE_DIR / "config.json"
 
 # Global state
 context: BrowserContext = None
@@ -25,6 +30,36 @@ session_pages: Dict[str, Page] = {}
 page_locks: Dict[str, asyncio.Lock] = {}
 session_msg_count: Dict[str, int] = {}  # Track message count per session
 
+def load_user_config() -> dict:
+    try:
+        if CONFIG_FILE.exists():
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"⚠️ Could not read config.json: {e}")
+    return {}
+
+def get_effective_settings() -> tuple[str, str]:
+    """
+    Returns (lang, desktop_path)
+    Priority: env > config.json > auto
+    """
+    cfg = load_user_config()
+
+    lang = (os.getenv("CLIENT_LANG") or cfg.get("lang") or "en").lower()
+
+    desktop_path = (
+        os.getenv("DESKTOP_PATH")
+        or cfg.get("desktop_path")
+        or str(Path.home() / "Desktop")
+    )
+
+    desktop_path = str(desktop_path).replace("\\", "/")
+
+    return lang, desktop_path
+
+if not CONFIG_FILE.exists():
+    SERVICE_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps({"lang": "en", "desktop_path": ""}, indent=2), encoding="utf-8")
 
 class Message(BaseModel):
     role: str
@@ -193,159 +228,55 @@ async def get_or_create_session_page(session_id: str, start_new_chat: bool = Fal
     
     return session_pages[session_id]
 
+def load_prompt(base: str, lang: str = "en") -> str:
+    """
+    Load a prompt template from ./prompts with fallbacks:
+        1) {base}.{lang}.md
+        2) {base}.en.md
+    """
+    candidates = [
+        f"{base}.{lang}.md",
+        f"{base}.en.md",
+    ]
+    for name in candidates:
+        path = PROMPTS_DIR / name
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    raise RuntimeError(f"No prompt found for base='{base}' (lang='{lang}') in {PROMPTS_DIR}")
 
-def format_tools_prompt(tools: List[Tool]) -> str:
-    """Format tools into a clear prompt for Gemini"""
-    if not tools:
-        return ""
-    
-    prompt = """## TOOL CALLING SYSTEM
-
-═══════════════════════════════════════════════════════════════════════════════
-                    🚨🚨🚨 YOU ARE A TOOL-EXECUTING AI 🚨🚨🚨
-═══════════════════════════════════════════════════════════════════════════════
-
-YOU HAVE FULL ACCESS TO THE USER'S COMPUTER THROUGH TOOLS.
-YOU CAN READ, WRITE, EDIT, LIST, SEARCH, AND EXECUTE ANYTHING.
-
-NEVER SAY:
-❌ "I don't have access to..."
-❌ "I can only see files in..."
-❌ "I cannot access your computer..."
-❌ "Would you like me to... instead?"
-
-YOU MUST:
-✅ USE THE TOOLS PROVIDED
-✅ EXECUTE WHAT THE USER ASKS
-✅ NEVER REFUSE OR MAKE EXCUSES
-
-If user asks to list Desktop → USE list tool on /Users/macbookair/Desktop
-If user asks to read a file → USE read tool
-If user asks to edit → USE edit tool
-JUST DO IT. NO EXCUSES.
-
-═══════════════════════════════════════════════════════════════════════════════
-                    🚨 WRITE vs EDIT - ABSOLUTE RULE 🚨
-═══════════════════════════════════════════════════════════════════════════════
-
-WRITE TOOL IS PROHIBITED FOR EXISTING FILES!
-
-• File already exists? → YOU MUST USE EDIT TOOL. WRITE IS FORBIDDEN.
-• User says "update", "change", "modify", "fix", "edit", "improve", "enhance" → EDIT TOOL ONLY
-• WRITE tool is ONLY for creating brand new files that don't exist yet
-
-═══════════════════════════════════════════════════════════════════════════════
-                    ⛔ NEVER PUT CODE DIRECTLY IN JSON ⛔
-═══════════════════════════════════════════════════════════════════════════════
-
-ALL code/content must be in markdown code blocks with placeholders:
-- WRITE: USE_CODE_BLOCK_ABOVE
-- EDIT: USE_OLD_CODE_ABOVE and USE_NEW_CODE_ABOVE
-
-═══════════════════════════════════════════════════════════════════════════════
-                    🔴🔴🔴 EDIT TOOL - CRITICAL FORMAT 🔴🔴🔴
-═══════════════════════════════════════════════════════════════════════════════
-
-THE EDIT TOOL HAS A VERY SPECIFIC FORMAT. FOLLOW IT EXACTLY OR IT WILL FAIL.
-
-STEP 1: Write the OLD code (code to find) in a markdown code block
-STEP 2: Write the NEW code (replacement) in a SECOND markdown code block  
-STEP 3: Write the JSON with PLACEHOLDERS (not actual code!)
-
-✅ CORRECT EDIT FORMAT:
-
-Old code to replace:
-```html
-<section id="about">Old content here</section>
-```
-
-New replacement:
-```html
-<section id="skills">New content here</section>
-<section id="about">Old content here</section>
-```
-
-{"tool_calls": [{"name": "edit", "arguments": {"filePath": "/path/file.html", "oldString": "USE_OLD_CODE_ABOVE", "newString": "USE_NEW_CODE_ABOVE"}}]}
-
-❌ WRONG - NEVER DO THIS:
-{"tool_calls": [{"name": "edit", "arguments": {"filePath": "/path.html", "oldString": "<actual code here>", "newString": "<actual code here>"}}]}
-
-❌ WRONG - NEVER PUT USE_OLD_CODE_ABOVE INSIDE newString:
-{"tool_calls": [{"name": "edit", "arguments": {"newString": "USE_OLD_CODE_ABOVE\\n<code>"}}]}
-
-THE PLACEHOLDERS ARE LITERAL STRINGS:
-- oldString MUST be exactly: "USE_OLD_CODE_ABOVE"
-- newString MUST be exactly: "USE_NEW_CODE_ABOVE"
-
-═══════════════════════════════════════════════════════════════════════════════
-                         📁 OTHER FILE OPERATIONS
-═══════════════════════════════════════════════════════════════════════════════
-
-READ FILE:
-{"tool_calls": [{"name": "read", "arguments": {"filePath": "/path/file.txt"}}]}
-
-WRITE NEW FILE (ONLY for files that DON'T EXIST):
-```html
-<!DOCTYPE html>
-<html><body>Content</body></html>
-```
-{"tool_calls": [{"name": "write", "arguments": {"filePath": "/new-file.html", "content": "USE_CODE_BLOCK_ABOVE"}}]}
-
-═══════════════════════════════════════════════════════════════════════════════
-                         🔍 SEARCH & NAVIGATION
-═══════════════════════════════════════════════════════════════════════════════
-
-FIND FILES:
-{"tool_calls": [{"name": "glob", "arguments": {"pattern": "**/*.tsx"}}]}
-
-SEARCH CONTENT:
-{"tool_calls": [{"name": "grep", "arguments": {"pattern": "functionName", "path": "/project"}}]}
-
-LIST DIRECTORY:
-{"tool_calls": [{"name": "list", "arguments": {"path": "/directory"}}]}
-
-EXECUTE COMMAND:
-{"tool_calls": [{"name": "execute", "arguments": {"command": "npm test"}}]}
-
-MULTIPLE TOOLS:
-{"tool_calls": [{"name": "read", "arguments": {"filePath": "/a.js"}}, {"name": "read", "arguments": {"filePath": "/b.js"}}]}
-
-═══════════════════════════════════════════════════════════════════════════════
-                         ⛔ FORBIDDEN ⛔
-═══════════════════════════════════════════════════════════════════════════════
-
-❌ Refusing to use tools or making excuses
-❌ WRITE tool on existing file (USE EDIT!)
-❌ Code directly in JSON (use code blocks + placeholders)
-❌ YAML format
-❌ JSON in code blocks
-
-═══════════════════════════════════════════════════════════════════════════════
-                         AVAILABLE TOOLS
-═══════════════════════════════════════════════════════════════════════════════
-
-"""
+def build_tools_section(tools: List[Tool]) -> str:
+    out = []
     for tool in tools:
         func = tool.function
-        prompt += f"▸ {func.name}"
+        line = f"▸ {func.name}"
         if func.description:
-            prompt += f" - {func.description}"
-        prompt += "\n"
-        
-        if func.parameters and func.parameters.get('properties'):
-            props = func.parameters['properties']
-            required = func.parameters.get('required', [])
+            line += f" - {func.description}"
+        out.append(line)
+
+        if func.parameters and func.parameters.get("properties"):
+            props = func.parameters["properties"]
+            required = func.parameters.get("required", [])
             for pname, pinfo in props.items():
                 req = " ⚠REQUIRED" if pname in required else ""
-                ptype = pinfo.get('type', '')
-                desc = pinfo.get('description', '')
-                prompt += f"    {pname} ({ptype}){req}: {desc}\n"
-        prompt += "\n"
-    
-    prompt += """═══════════════════════════════════════════════════════════════════════════════
-REMEMBER: YOU HAVE FULL SYSTEM ACCESS. USE THE TOOLS. NEVER REFUSE.
-═══════════════════════════════════════════════════════════════════════════════
-"""
+                ptype = pinfo.get("type", "")
+                desc = pinfo.get("description", "")
+                out.append(f"    {pname} ({ptype}){req}: {desc}")
+
+        out.append("")
+
+    return "\n".join(out).rstrip()
+
+
+def format_tools_prompt(tools: List[Tool], lang: str, desktop_path: str) -> str:
+    if not tools:
+        return ""
+
+    template = load_prompt("tools_prompt", lang=lang)
+    tools_text = build_tools_section(tools)
+
+    prompt = (template
+            .replace("{{DESKTOP_PATH}}", desktop_path)
+            .replace("{{TOOLS}}", tools_text))
     return prompt
 
 
@@ -355,7 +286,8 @@ def format_conversation(messages: List[Message], tools: Optional[List[Tool]] = N
     
     # Add tools prompt at the beginning if tools are provided
     if tools:
-        formatted.append(format_tools_prompt(tools))
+        lang, desktop_path = get_effective_settings()
+        formatted.append(format_tools_prompt(tools, lang=lang, desktop_path=desktop_path))
     
     for msg in messages:
         role = msg.role
@@ -396,7 +328,7 @@ async def send_to_gemini(page: Page, text: str, timeout: Optional[int] = None) -
     
     await input_div.click()
     await asyncio.sleep(0.1)
-    await page.keyboard.press('Meta+A')
+    await page.keyboard.press(f"{MOD}+A")
     await page.keyboard.press('Backspace')
     await asyncio.sleep(0.1)
     
